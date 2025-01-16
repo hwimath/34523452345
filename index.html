@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>여러 가지 수열의 합</title>
+  <!-- MathJax 불러오기 (LaTeX 렌더링용) -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+    defer
+  ></script>
+
+  <style>
+    /* 흑백 테마 */
+    body {
+      background-color: #fff;
+      color: #000;
+      margin: 20px;
+      font-family: sans-serif;
+    }
+
+    h1, h2, h3 {
+      margin: 0.5em 0;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    /* 전체 게임 시간 표시 */
+    #totalTime {
+      margin-bottom: 1em;
+    }
+
+    /* 에너지바 (개별 문제 시간) */
+    #energyBarContainer {
+      width: 300px;
+      height: 20px;
+      border: 1px solid #000;
+      margin-bottom: 1em;
+      position: relative;
+    }
+    #energyBar {
+      background-color: #000;
+      width: 100%;
+      height: 100%;
+      transition: width 0.2s linear;
+    }
+
+    /* 보기 영역 */
+    .choice {
+      margin: 0.25em 0;
+    }
+
+    /* 오답/정답 표시 */
+    #feedback {
+      margin: 1em 0;
+      font-weight: bold;
+    }
+
+    /* 남은 기회 */
+    #lifeContainer {
+      margin-bottom: 1em;
+    }
+
+    /* 점수 전송 결과 메시지 */
+    #response {
+      white-space: pre;
+      margin-top: 1em;
+      border: 1px solid #000;
+      padding: 10px;
+      width: 90%;
+      max-width: 400px;
+    }
+  </style>
+</head>
+<body>
+<h1>여러 가지 수열의 합</h1>
+
+<!-- 이름 입력 -->
+<div>
+  <label for="userNameInput">이름을 입력하세요:</label>
+  <input type="text" id="userNameInput" />
+</div>
+
+<!-- 난이도 선택 -->
+<div>
+  <p>난이도를 선택하세요:</p>
+  <label><input type="radio" name="difficulty" value="top" />최상 (20초)</label>
+  <label><input type="radio" name="difficulty" value="high" />상 (30초)</label>
+  <label><input type="radio" name="difficulty" value="mid" />중 (40초)</label>
+  <label><input type="radio" name="difficulty" value="low" />하 (시간 제한 없음)</label>
+</div>
+
+<!-- 시작 버튼 -->
+<button id="startBtn">게임 시작</button>
+
+<hr />
+
+<!-- 전체 게임 시간 표시 -->
+<div id="totalTime">전체 진행 시간: 0초</div>
+
+<!-- 남은 기회 -->
+<div id="lifeContainer">남은 기회: <span id="life">3</span></div>
+
+<!-- 점수 표시 -->
+<div>점수: <span id="score">0</span></div>
+
+<!-- 에너지바 -->
+<div id="energyBarContainer" class="hidden">
+  <div id="energyBar"></div>
+</div>
+
+<!-- 문제 영역 -->
+<div id="questionContainer" class="hidden">
+  <div id="questionText"></div>
+  <div id="choices"></div>
+  <div id="feedback"></div>
+</div>
+
+<!-- 게임 종료 화면 -->
+<div id="gameOverScreen" class="hidden">
+  <h2>게임 종료</h2>
+  <div>최종 점수: <span id="finalScore"></span></div>
+  <button id="sendScoreBtn">점수 전송</button>
+  <div id="response"></div>
+</div>
+
+<script>
+  /******************************************
+   * 서버에 전송하는 함수 (지시사항 준수)
+   ******************************************/
+  async function saveData(game, name, score, elapsedTime) {
+    const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+
+    const requestData = {
+      game,
+      name,
+      score: parseInt(score, 10),
+      elapsedTime: parseInt(elapsedTime, 10)
+    };
+
+    try {
+      const response = await fetch(FUNCTION_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestData)
+      });
+      const responseData = await response.json();
+
+      if (response.ok) {
+        document.getElementById("response").innerText =
+          `성공: ${JSON.stringify(responseData, null, 2)}`;
+      } else {
+        document.getElementById("response").innerText =
+          `오류: ${JSON.stringify(responseData, null, 2)}`;
+      }
+    } catch (error) {
+      console.error("요청 실패:", error);
+      document.getElementById("response").innerText =
+        `네트워크 오류: ${error.message}`;
+    }
+  }
+
+  /******************************************
+   * 모든 문제 데이터(지시사항: 원본 문제 전부 수록, 무작위로 출제)
+   ******************************************/
+  // 각 문제는 { questionText, options: [...], correctIndex }
+  // 문제 본문에 "조건"도 필요한 것은 함께 넣었음.
+  // 수식은 \\(...\\) 로 감싸고, 보기도 동일하게 처리.
+
+  function createQuestions() {
+    const allQuestions = [
+      {
+        questionText: `
+다음 수열의 첫 10항의 합을 구하라. 
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{2}{(2k-1)(2k+1)}\\). 
+(단, \\(k\\)는 1부터 10까지의 자연수)`,
+        options: [
+          "\\(\\dfrac{10}{11}\\)",
+          "\\(\\dfrac{20}{21}\\)",
+          "\\(\\dfrac{19}{20}\\)",
+          "\\(\\dfrac{21}{22}\\)"
+        ],
+        correctIndex: 1, // 20/21
+      },
+      {
+        questionText: `
+다음 수열의 첫 10항의 합을 구하라.
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{2}{k(k+2)}\\).
+(단, \\(k\\)는 1부터 10까지의 자연수)`,
+        options: [
+          "\\(\\dfrac{175}{132}\\)",
+          "\\(\\dfrac{29}{44}\\)",
+          "\\(\\dfrac{10}{11}\\)",
+          "\\(1\\)"
+        ],
+        correctIndex: 0 // 175/132
+      },
+      {
+        questionText: `
+다음 수열의 첫 9항의 합을 구하라.
+\\(\\displaystyle \\sum_{k=1}^{9} \\dfrac{1}{(k+1)(k+3)}\\). 
+(단, \\(k\\)는 1부터 9까지의 자연수)`,
+        options: [
+          "\\(\\dfrac{29}{88}\\)",
+          "\\(\\dfrac{14}{45}\\)",
+          "\\(\\dfrac{7}{30}\\)",
+          "\\(\\dfrac{5}{12}\\)"
+        ],
+        correctIndex: 0 // 29/88
+      },
+      {
+        questionText: `
+다음 수열의 첫 7항의 합을 구하라.
+\\(\\displaystyle \\sum_{k=1}^{7} \\dfrac{1}{(k+2)(k+3)}\\).
+(단, \\(k\\)는 1부터 7까지의 자연수)`,
+        options: [
+          "\\(\\dfrac{5}{12}\\)",
+          "\\(\\dfrac{7}{30}\\)",
+          "\\(\\dfrac{7}{45}\\)",
+          "\\(\\dfrac{9}{40}\\)"
+        ],
+        correctIndex: 1 // 7/30
+      },
+      {
+        questionText: `
+다음 수열의 합을 구하라.
+\\(\\displaystyle \\sum_{k=2}^{20} \\dfrac{1}{(k-1)\\,k}\\).
+(단, \\(k\\)는 2부터 20까지의 자연수)`,
+        options: [
+          "\\(\\dfrac{10}{11}\\)",
+          "\\(\\dfrac{19}{20}\\)",
+          "\\(\\dfrac{20}{21}\\)",
+          "\\(\\dfrac{9}{10}\\)"
+        ],
+        correctIndex: 1 // 19/20
+      },
+      {
+        questionText: `
+다음 수열의 합을 구하라.
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{1}{k(k+1)}\\).
+(단, \\(k\\)는 1부터 10까지의 자연수)`,
+        options: [
+          "\\(1\\)",
+          "\\(\\dfrac{10}{11}\\)",
+          "\\(\\dfrac{9}{10}\\)",
+          "\\(\\dfrac{20}{21}\\)"
+        ],
+        correctIndex: 1 // 10/11
+      },
+      {
+        questionText: `
+다음 식의 합을 구하라.
+\\(\\displaystyle \\sum_{k=1}^{14}\\Bigl(\\dfrac{k(k+1)}{5} + \\dfrac{15}{k(k+1)}\\Bigr)\\)`,
+        options: [
+          "210",
+          "224",
+          "238",
+          "252"
+        ],
+        correctIndex: 2 // 238
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{3\\times5} + \\dfrac{1}{5\\times7} + \\cdots + \\dfrac{1}{49\\times51}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{10}{21}\\)",
+          "\\(\\dfrac{25}{51}\\)",
+          "\\(\\dfrac{20}{41}\\)",
+          "\\(\\dfrac{5}{12}\\)"
+        ],
+        correctIndex: 1 // 25/51
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{2\\times4} + \\dfrac{1}{3\\times5} + \\dfrac{1}{4\\times6} + \\cdots + \\dfrac{1}{8\\times10}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{14}{45}\\)",
+          "\\(\\dfrac{5}{12}\\)",
+          "\\(\\dfrac{7}{30}\\)",
+          "\\(\\dfrac{29}{45}\\)"
+        ],
+        correctIndex: 0 // 14/45
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{3\\times5} + \\cdots + \\dfrac{1}{19\\times21}\\) 의 합을 구하라.`,
+        options: [
+          "\\(\\dfrac{10}{21}\\)",
+          "\\(\\dfrac{20}{21}\\)",
+          "\\(\\dfrac{2}{5}\\)",
+          "\\(\\dfrac{9}{20}\\)"
+        ],
+        correctIndex: 0 // 10/21
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{2\\times4} + \\dfrac{1}{3\\times5} + \\cdots + \\dfrac{1}{8\\times10}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{10}{21}\\)",
+          "\\(\\dfrac{14}{45}\\)",
+          "\\(\\dfrac{29}{45}\\)",
+          "\\(\\dfrac{58}{45}\\)"
+        ],
+        correctIndex: 2 // 29/45
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{2\\times3} + \\dfrac{1}{3\\times4} + \\dfrac{1}{4\\times5} + \\cdots + \\dfrac{1}{11\\times12}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{5}{12}\\)",
+          "\\(\\dfrac{7}{12}\\)",
+          "\\(\\dfrac{5}{11}\\)",
+          "\\(\\dfrac{1}{2}\\)"
+        ],
+        correctIndex: 0 // 5/12
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{2\\times4} + \\dfrac{1}{3\\times5} + \\cdots + \\dfrac{1}{10\\times12}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{175}{264}\\)",
+          "\\(\\dfrac{14}{45}\\)",
+          "\\(\\dfrac{7}{12}\\)",
+          "1"
+        ],
+        correctIndex: 0 // 175/264
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times2} + \\dfrac{1}{2\\times3} + \\cdots + \\dfrac{1}{100\\times101}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{99}{100}\\)",
+          "\\(\\dfrac{50}{51}\\)",
+          "\\(\\dfrac{100}{101}\\)",
+          "1"
+        ],
+        correctIndex: 2 // 100/101
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{3\\times5} + \\dfrac{1}{5\\times7} + \\cdots + \\dfrac{1}{(2n-1)(2n+1)}\\) 의 일반합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{n}{2n+1}\\)",
+          "\\(\\dfrac{n+1}{2n+1}\\)",
+          "\\(\\dfrac{n}{2n-1}\\)",
+          "\\(\\dfrac{2n}{2n+1}\\)"
+        ],
+        correctIndex: 0 // n/(2n+1)
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{(k+1)(k+3)}\\) (k=1부터 n까지)의 합을 구하여라. 
+(단, 마지막 항은 \\(\\dfrac{1}{(n+1)(n+3)}\\))`,
+        options: [
+          "\\(\\dfrac12\\Bigl(\\dfrac{5}{6} - \\bigl(\\dfrac{1}{n+2} + \\dfrac{1}{n+3}\\bigr)\\Bigr)\\)",
+          "\\(\\dfrac{5}{6}\\Bigl(\\dfrac{1}{n+2} - \\dfrac{1}{n+3}\\Bigr)\\)",
+          "\\(\\dfrac{5}{12}\\Bigl(\\dfrac{1}{n+2} + \\dfrac{1}{n+3}\\Bigr)\\)",
+          "\\(\\dfrac{n}{n+2}\\)"
+        ],
+        correctIndex: 0
+        //  1/2 [ 5/6 - (1/(n+2)+1/(n+3)) ]
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times3} + \\dfrac{1}{2\\times4} + \\cdots + \\dfrac{1}{n(n+2)}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac12\\Bigl(\\dfrac32 - \\bigl(\\dfrac{1}{n+1} + \\dfrac{1}{n+2}\\bigr)\\Bigr)\\)",
+          "\\(\\dfrac{n}{n+2}\\)",
+          "\\(\\dfrac{n}{2(n+2)}\\)",
+          "\\(1 - \\dfrac{1}{n+2}\\)"
+        ],
+        correctIndex: 0 
+        // 1/2( (1 + 1/2 + ... ) - ... ) -> result = 1/2(1 + 1/2 - 1/(n+1) -1/(n+2)) => 
+        // 좀 더 간단히 쓰면 문제풀이에서 1/2(...) 식. 여기서는 보기 그대로 사용.
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{1\\times2} + \\dfrac{1}{2\\times3} + \\cdots + \\dfrac{1}{n(n+1)}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{n}{n+1}\\)",
+          "\\(\\dfrac{n+1}{n+2}\\)",
+          "\\(1 - \\dfrac{1}{2(n+1)}\\)",
+          "\\(\\dfrac{n}{2n+1}\\)"
+        ],
+        correctIndex: 0 // n/(n+1)
+      },
+      {
+        questionText: `
+다음 급수 \\(\\dfrac{1}{2\\times3} + \\dfrac{1}{3\\times4} + \\cdots + \\dfrac{1}{(n+1)(n+2)}\\) 의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{n}{2(n+2)}\\)",
+          "\\(\\dfrac{n}{n+2}\\)",
+          "\\(\\dfrac{n+1}{n+2}\\)",
+          "\\(\\dfrac{n}{2n+1}\\)"
+        ],
+        correctIndex: 0 // n/(2(n+2))
+      },
+      {
+        questionText: `
+수열 \\(1, \\;\\dfrac{1}{1+2}, \\;\\dfrac{1}{1+2+3}, \\;\\dfrac{1}{1+2+3+4},\\dots\\) 에서
+첫째항부터 제10항까지의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{20}{11}\\)",
+          "\\(\\dfrac{11}{5}\\)",
+          "2",
+          "\\(\\dfrac{9}{11}\\)"
+        ],
+        correctIndex: 0 // 20/11
+      },
+      {
+        questionText: `
+수열 \\(\\dfrac{1}{3^2-1}, \\;\\dfrac{1}{5^2-1}, \\;\\dfrac{1}{7^2-1},\\dots\\) 의
+첫째항부터 제10항까지의 합을 구하여라.`,
+        options: [
+          "\\(\\dfrac{3}{22}\\)",
+          "\\(\\dfrac{5}{24}\\)",
+          "\\(\\dfrac{5}{22}\\)",
+          "\\(\\tfrac{1}{4}\\)"
+        ],
+        correctIndex: 2 // 5/22
+      },
+      {
+        questionText: `
+수열 \\(\\{a_n\\}\\)의 첫째항부터 \\(n\\)항까지 합 \\(S_n\\)에 대하여,
+\\(S_n = n^2 + 2n\\)일 때, 
+\\(\\displaystyle \\sum_{k=1}^{15}\\dfrac{1}{a_k a_{k+1}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{1}{11}\\)",
+          "\\(\\dfrac{2}{11}\\)",
+          "\\(\\dfrac{4}{33}\\)",
+          "\\(\\dfrac{5}{33}\\)"
+        ],
+        correctIndex: 3 // 5/33
+      },
+      {
+        questionText: `
+수열 \\(\\{a_n\\}\\)이 \\(\\dfrac{1}{2^2+2}, \\;\\dfrac{1}{3^2+3}, \\;\\dfrac{1}{4^2+4},\\dots\\) 일 때,
+\\(\\displaystyle \\sum_{k=1}^{11} a_k\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{11}{26}\\)",
+          "\\(\\dfrac{5}{12}\\)",
+          "\\(\\dfrac12\\)",
+          "\\(\\dfrac{10}{21}\\)"
+        ],
+        correctIndex: 0 // 11/26
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{80} \\dfrac{1}{\\sqrt{k+1}+\\sqrt{k}}\\) 의 값을 구하여라.`,
+        options: [
+          "8",
+          "9",
+          "10",
+          "7"
+        ],
+        correctIndex: 0 // 8
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{99} \\dfrac{1}{\\sqrt{k}+\\sqrt{k+1}}\\) 의 값을 구하여라.`,
+        options: [
+          "8",
+          "9",
+          "10",
+          "11"
+        ],
+        correctIndex: 1 // 9
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{2}{\\sqrt{2k+1}+\\sqrt{2k-1}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\sqrt{21}\\)",
+          "\\(\\sqrt{21}-1\\)",
+          "\\(\\sqrt{19}+1\\)",
+          "\\(\\sqrt{25}-3\\)"
+        ],
+        correctIndex: 1 // sqrt(21)-1
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{11} \\dfrac{1}{\\sqrt{2k+3}+\\sqrt{2k+1}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{5-\\sqrt{3}}{2}\\)",
+          "\\(\\dfrac{5+\\sqrt{3}}{2}\\)",
+          "\\(5-\\sqrt{3}\\)",
+          "\\(5+\\sqrt{3}\\)"
+        ],
+        correctIndex: 0 // (5 - sqrt(3))/2
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{1}{\\sqrt{k+3}+\\sqrt{k+2}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\sqrt{13}\\)",
+          "\\(\\sqrt{13}-\\sqrt{3}\\)",
+          "\\(\\sqrt{13}-2\\)",
+          "\\(\\sqrt{10}\\)"
+        ],
+        correctIndex: 1 // sqrt(13)- sqrt(3)
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{8} \\dfrac{1}{\\sqrt{k+1}+\\sqrt{k}}\\) 의 값을 구하여라.`,
+        options: [
+          "1",
+          "2",
+          "3",
+          "4"
+        ],
+        correctIndex: 1 // 2
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{10} \\dfrac{3}{\\sqrt{3k+2}+\\sqrt{3k-1}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(2\\sqrt{3}\\)",
+          "\\(3\\sqrt{2}\\)",
+          "\\(3\\sqrt{3}\\)",
+          "\\(4\\sqrt{2}\\)"
+        ],
+        correctIndex: 1 // 3 sqrt(2)
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{8} \\bigl(\\sqrt{k}-\\sqrt{k+1}\\bigr)\\) 의 값을 구하여라.`,
+        options: [
+          "-2",
+          "-1",
+          "1",
+          "2"
+        ],
+        correctIndex: 0 // -2
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\dfrac{1}{\\sqrt{3}+1} + \\dfrac{1}{\\sqrt{5}+\\sqrt{3}} + \\dfrac{1}{\\sqrt{7}+\\sqrt{5}} + \\cdots + \\dfrac{1}{\\sqrt{49}+\\sqrt{47}}\\) 의 합을 구하여라.`,
+        options: [
+          "2",
+          "3",
+          "4",
+          "6"
+        ],
+        correctIndex: 1 // 3
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\dfrac{2}{\\sqrt{3}+1} + \\dfrac{2}{\\sqrt{5}+\\sqrt{3}} + \\cdots + \\dfrac{2}{\\sqrt{81}+\\sqrt{79}}\\) 의 합을 구하여라.`,
+        options: [
+          "6",
+          "7",
+          "8",
+          "9"
+        ],
+        correctIndex: 2 // 8
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\dfrac{1}{1+\\sqrt{2}} + \\dfrac{1}{\\sqrt{2}+\\sqrt{3}} + \\dfrac{1}{\\sqrt{3}+\\sqrt{4}} + \\cdots + \\dfrac{1}{\\sqrt{99}+\\sqrt{100}}\\) 의 합을 구하여라.`,
+        options: [
+          "8",
+          "9",
+          "10",
+          "11"
+        ],
+        correctIndex: 1 // 9
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\dfrac{1}{\\sqrt{5}+\\sqrt{2}} + \\dfrac{1}{\\sqrt{8}+\\sqrt{5}} + \\dfrac{1}{\\sqrt{11}+\\sqrt{8}} + \\cdots + \\dfrac{1}{\\sqrt{50}+\\sqrt{47}}\\) 의 값을 구하여라.`,
+        options: [
+          "\\(\\dfrac{2\\sqrt{2}}{3}\\)",
+          "\\(\\dfrac{4\\sqrt{2}}{3}\\)",
+          "\\(\\sqrt{2}\\)",
+          "4"
+        ],
+        correctIndex: 1 // 4 sqrt(2)/3
+      },
+      {
+        questionText: `
+함수 \\(f(x)=\\dfrac{1}{\\sqrt{x}+\\sqrt{x+1}}\\)에 대하여,
+\\(f(1)+f(2)+f(3)+\\cdots+f(99)\\) 의 값을 구하여라.`,
+        options: [
+          "8",
+          "9",
+          "10",
+          "11"
+        ],
+        correctIndex: 1 // 9
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\sum_{k=1}^{n}\\dfrac{1}{\\sqrt{k+1}+\\sqrt{k}} = 4\\) 일 때, 자연수 \\(n\\)의 값을 구하여라.`,
+        options: [
+          "24",
+          "25",
+          "26",
+          "23"
+        ],
+        correctIndex: 0 // n=24
+      },
+      {
+        questionText: `
+\\(\\displaystyle \\dfrac{1}{\\sqrt{2}+\\sqrt{4}} + \\dfrac{1}{\\sqrt{4}+\\sqrt{6}} + \\cdots + \\dfrac{1}{\\sqrt{62}+\\sqrt{64}} = a + b\\sqrt{2}\\) 일 때, 
+\\(a+b\\)의 값을 구하여라. (\\(a,b\\)는 유리수)`,
+        options: [
+          "3",
+          "3.5",
+          "4",
+          "2.5"
+        ],
+        correctIndex: 1 // 3.5
+      },
+      {
+        questionText: `
+첫째항이 1, 공차가 2인 등차수열 \\(\\{a_n\\}\\)에 대하여
+\\(\\displaystyle \\dfrac{1}{\\sqrt{a_1}+\\sqrt{a_2}} + \\dfrac{1}{\\sqrt{a_2}+\\sqrt{a_3}} + \\cdots + \\dfrac{1}{\\sqrt{a_{24}}+\\sqrt{a_{25}}}\\) 의 값을 구하여라.`,
+        options: [
+          "2",
+          "3",
+          "4",
+          "5"
+        ],
+        correctIndex: 1 // 3
+      }
+    ];
+
+    return allQuestions;
+  }
+
+  /******************************************
+   * 배열 무작위 섞기
+   ******************************************/
+  function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+  }
+
+  /******************************************
+   * 전역 변수들
+   ******************************************/
+  let questions = [];
+  let currentQuestionIndex = 0;
+  let score = 0;
+  let lives = 3;
+  let totalSeconds = 0; // 전체 게임 시간(초)
+  let intervalId = null; // 전체 시간 타이머
+  let questionTimerId = null; // 문제별 에너지바 타이머
+  let selectedDifficulty = "low"; // 기본
+  let timeLimitPerQuestion = 999999; // 하 난이도(무제한: 큰 값)
+  let pointPerQuestion = 10; // 하 난이도 점수
+  let nameInput = "";
+  let isGameOver = false;
+
+  // 에너지바 관련
+  let barWidth = 100; // 100%에서 시작
+  let decrementPerTick = 0; // 난이도별로 설정
+
+  /******************************************
+   * 난이도에 따른 초기 설정
+   ******************************************/
+  function setDifficultyAndStart() {
+    const radios = document.getElementsByName("difficulty");
+    for (let r of radios) {
+      if (r.checked) {
+        selectedDifficulty = r.value;
+        break;
+      }
+    }
+    if (selectedDifficulty === "top") {
+      timeLimitPerQuestion = 20;
+      pointPerQuestion = 20;
+    } else if (selectedDifficulty === "high") {
+      timeLimitPerQuestion = 30;
+      pointPerQuestion = 15;
+    } else if (selectedDifficulty === "mid") {
+      timeLimitPerQuestion = 40;
+      pointPerQuestion = 13;
+    } else {
+      // low
+      timeLimitPerQuestion = 999999;
+      pointPerQuestion = 10;
+    }
+
+    if (timeLimitPerQuestion !== 999999) {
+      decrementPerTick = 100 / (timeLimitPerQuestion * 5); 
+      // 0.2초(=200ms)마다 에너지바 폭을 줄이므로 
+      // timeLimitPerQuestion초 동안 => (timeLimitPerQuestion / 0.2) = 5 * timeLimitPerQuestion steps
+    } else {
+      decrementPerTick = 0; // 제한 없음
+    }
+  }
+
+  /******************************************
+   * 게임 시작 함수
+   ******************************************/
+  function startGame() {
+    // 이름
+    nameInput = document.getElementById("userNameInput").value.trim();
+
+    // 문제 셋업
+    questions = createQuestions();
+    shuffleArray(questions); // 전체 문제를 무작위로 섞음
+    currentQuestionIndex = 0;
+    score = 0;
+    lives = 3;
+    totalSeconds = 0;
+    isGameOver = false;
+
+    document.getElementById("score").textContent = score;
+    document.getElementById("life").textContent = lives;
+
+    // 전체 시간 타이머 시작
+    if (intervalId) clearInterval(intervalId);
+    intervalId = setInterval(() => {
+      totalSeconds++;
+      document.getElementById("totalTime").textContent =
+        `전체 진행 시간: ${totalSeconds}초`;
+    }, 1000);
+
+    // 첫 문제 표시
+    document.getElementById("gameOverScreen").classList.add("hidden");
+    showNextQuestion();
+  }
+
+  /******************************************
+   * 문제 표시
+   ******************************************/
+  function showNextQuestion() {
+    // 혹시 lives=0 이면 종료
+    if (lives <= 0) {
+      endGame();
+      return;
+    }
+
+    // 모든 문제가 끝났으면 “무한반복” 모드로: 다시 섞고 0부터
+    // (지시사항: "모든 문제가 끝나면 이후 무작위로 계속 끝없이")
+    if (currentQuestionIndex >= questions.length) {
+      shuffleArray(questions);
+      currentQuestionIndex = 0;
+    }
+
+    // UI 업데이트
+    document.getElementById("questionContainer").classList.remove("hidden");
+    document.getElementById("energyBarContainer").classList.remove("hidden");
+    document.getElementById("feedback").textContent = "";
+
+    const q = questions[currentQuestionIndex];
+
+    // 문제 텍스트 채우기
+    document.getElementById("questionText").innerHTML = q.questionText;
+
+    // 보기 구성
+    const choicesDiv = document.getElementById("choices");
+    choicesDiv.innerHTML = "";
+    // 보기 무작위 섞기 위해 indices 생성
+    const idxArr = [0,1,2,3];
+    shuffleArray(idxArr);
+    idxArr.forEach((i) => {
+      const btn = document.createElement("button");
+      btn.className = "choice";
+      btn.innerHTML = q.options[i];
+      btn.onclick = () => handleAnswer(i, q.correctIndex);
+      choicesDiv.appendChild(btn);
+    });
+
+    // 매번 수식 렌더링
+    MathJax.typeset();
+
+    // 에너지바 초기화
+    barWidth = 100;
+    document.getElementById("energyBar").style.width = barWidth + "%";
+    if (questionTimerId) clearInterval(questionTimerId);
+
+    // 난이도가 '하'가 아니면 에너지바 감소
+    if (timeLimitPerQuestion !== 999999) {
+      questionTimerId = setInterval(() => {
+        barWidth -= decrementPerTick;
+        if (barWidth <= 0) {
+          barWidth = 0;
+          // 시간 초과 => 기회 1 감소
+          clearInterval(questionTimerId);
+          lives--;
+          document.getElementById("life").textContent = lives;
+          document.getElementById("feedback").textContent = "시간 초과!";
+          // 잠시 후 다음 문제
+          setTimeout(() => {
+            if (lives <= 0) {
+              endGame();
+            } else {
+              showNextQuestionIndex();
+            }
+          }, 1000);
+        }
+        document.getElementById("energyBar").style.width = barWidth + "%";
+      }, 200); // 0.2초 간격
+    } else {
+      // 하 난이도면 에너지바를 숨기거나 유지
+      document.getElementById("energyBar").style.width = "100%";
+    }
+  }
+
+  function showNextQuestionIndex() {
+    currentQuestionIndex++;
+    showNextQuestion();
+  }
+
+  /******************************************
+   * 정답 처리
+   ******************************************/
+  function handleAnswer(selectedIndex, correctIndex) {
+    if (isGameOver) return; // 이미 끝난 경우 막기
+    // 타이머 중단
+    if (questionTimerId) clearInterval(questionTimerId);
+
+    if (selectedIndex === correctIndex) {
+      // 정답
+      score += pointPerQuestion;
+      document.getElementById("score").textContent = score;
+      document.getElementById("feedback").textContent = "정답입니다!";
+    } else {
+      // 오답
+      lives--;
+      document.getElementById("life").textContent = lives;
+      document.getElementById("feedback").textContent = "틀렸습니다. 정답: " +
+        document.getElementById("choices").children[0].parentNode.querySelectorAll("button")[correctIndex].innerHTML;
+    }
+
+    // 3번 틀리면(=기회 소진) 종료
+    if (lives <= 0) {
+      endGame();
+      return;
+    }
+
+    // 잠시 후 다음 문제
+    setTimeout(() => {
+      showNextQuestionIndex();
+    }, 1000);
+  }
+
+  /******************************************
+   * 게임 종료
+   ******************************************/
+  function endGame() {
+    isGameOver = true;
+    if (intervalId) clearInterval(intervalId);
+    if (questionTimerId) clearInterval(questionTimerId);
+
+    // UI 정리
+    document.getElementById("questionContainer").classList.add("hidden");
+    document.getElementById("energyBarContainer").classList.add("hidden");
+    document.getElementById("feedback").textContent = "";
+    document.getElementById("gameOverScreen").classList.remove("hidden");
+    document.getElementById("finalScore").textContent = score;
+  }
+
+  /******************************************
+   * 점수 전송
+   ******************************************/
+  document.getElementById("sendScoreBtn").onclick = function() {
+    // saveData("여러 가지 수열의 합", name, score, totalTime)
+    saveData(
+      "여러 가지 수열의 합",
+      nameInput,
+      score,
+      totalSeconds
+    );
+  };
+
+  /******************************************
+   * 게임 시작 버튼 이벤트
+   ******************************************/
+  document.getElementById("startBtn").onclick = function() {
+    setDifficultyAndStart();
+    startGame();
+  };
+</script>
+</body>
+</html>
